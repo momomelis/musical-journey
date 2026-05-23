@@ -1,0 +1,811 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Touch Some Grass</title>
+    <script src="https://unpkg.com/react@18/umd/react.production.min.js" crossorigin></script>
+    <script src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js" crossorigin></script>
+    <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <style>* { margin:0; padding:0; box-sizing:border-box; } body { overflow:hidden; }</style>
+</head>
+<body>
+<div id="root"></div>
+
+<script>
+if (!window.claude) {
+    window.claude = {
+        complete: async function(promptText) {
+            const apiKey = localStorage.getItem('anthropic_api_key');
+            if (apiKey) {
+                try {
+                    const res = await fetch('https://api.anthropic.com/v1/messages', {
+                        method: 'POST',
+                        headers: {
+                            'Content-Type': 'application/json',
+                            'x-api-key': apiKey,
+                            'anthropic-version': '2023-06-01',
+                            'anthropic-dangerous-direct-browser-access': 'true'
+                        },
+                        body: JSON.stringify({
+                            model: 'claude-haiku-4-5-20251001',
+                            max_tokens: 30,
+                            messages: [{ role: 'user', content: promptText }]
+                        })
+                    });
+                    if (res.ok) { const d = await res.json(); return d.content[0].text; }
+                } catch(e) {}
+            }
+            const byRarity = {
+                rare: ['a piece of sea glass','a lucky horseshoe','a fossil fragment','a moonstone chip','a fallen star fragment','a golden acorn','an ancient coin'],
+                uncommon: ["a child's marble",'a friendship bracelet','a foreign coin','a mood ring','a vintage eraser','a lost key'],
+                common: ['a bottle cap','a smooth pebble','a robin feather','a candy wrapper','a lost button','a snail shell','a rubber band','a coin']
+            };
+            const r = promptText.includes('rare') ? 'rare' : promptText.includes('uncommon') ? 'uncommon' : 'common';
+            const list = byRarity[r];
+            return list[Math.floor(Math.random() * list.length)];
+        }
+    };
+}
+</script>
+
+<script type="text/babel">
+const { useState, useEffect, useRef } = React;
+
+const InteractiveGrass = () => {
+    const canvasRef = useRef(null);
+    const stars = useRef(null);
+    const [grass, setGrass] = useState([]);
+    const [dimensions, setDimensions] = useState({ width: window.innerWidth, height: window.innerHeight });
+    const [discoveries, setDiscoveries] = useState([]);
+    const [discoveryPoints, setDiscoveryPoints] = useState([]);
+    const [timeOfDay, setTimeOfDay] = useState('day');
+    const [isGenerating, setIsGenerating] = useState(false);
+    const [elapsedTime, setElapsedTime] = useState(0);
+    const [collectedDiscoveries, setCollectedDiscoveries] = useState([]);
+    const [gameState, setGameState] = useState('start');
+    const [timerActive, setTimerActive] = useState(false);
+    const [fadeOut, setFadeOut] = useState(false);
+    const [location, setLocation] = useState('');
+    const [discoveryTracker, setDiscoveryTracker] = useState({});
+    const [recentDiscoveries, setRecentDiscoveries] = useState([]);
+    const [audioContext, setAudioContext] = useState(null);
+    const [ambientGain, setAmbientGain] = useState(null);
+    // NFT state
+    const [walletAddress, setWalletAddress] = useState('');
+    const [mintedItems, setMintedItems] = useState({});
+    const [mintingId, setMintingId] = useState(null);
+
+    // Audio
+    useEffect(() => {
+        const context = new (window.AudioContext || window.webkitAudioContext)();
+        setAudioContext(context);
+        const masterGain = context.createGain();
+        masterGain.gain.value = 0;
+
+        const bufferSize = 2 * context.sampleRate;
+        const noiseBuffer = context.createBuffer(1, bufferSize, context.sampleRate);
+        const output = noiseBuffer.getChannelData(0);
+        for (let i = 0; i < bufferSize; i++) output[i] = Math.random() * 2 - 1;
+
+        const whiteNoise = context.createBufferSource();
+        whiteNoise.buffer = noiseBuffer;
+        whiteNoise.loop = true;
+        const windFilter = context.createBiquadFilter();
+        windFilter.type = 'lowpass';
+        windFilter.frequency.value = 500;
+        const windGain = context.createGain();
+        windGain.gain.value = 0.3;
+        whiteNoise.connect(windFilter);
+        windFilter.connect(windGain);
+        windGain.connect(masterGain);
+        whiteNoise.start(0);
+
+        const createBirdChirp = () => {
+            const osc = context.createOscillator();
+            const gain = context.createGain();
+            const filter = context.createBiquadFilter();
+            osc.type = 'sine';
+            filter.type = 'bandpass';
+            filter.frequency.value = 2500;
+            filter.Q.value = 10;
+            const freq = 2000 + Math.random() * 1000;
+            const t = context.currentTime + Math.random() * 5;
+            osc.frequency.setValueAtTime(freq, t);
+            osc.frequency.linearRampToValueAtTime(freq + 500, t + 0.05);
+            osc.frequency.linearRampToValueAtTime(freq, t + 0.1);
+            gain.gain.setValueAtTime(0, t);
+            gain.gain.linearRampToValueAtTime(0.06, t + 0.01);
+            gain.gain.exponentialRampToValueAtTime(0.001, t + 0.1);
+            osc.connect(filter); filter.connect(gain); gain.connect(masterGain);
+            osc.start(t); osc.stop(t + 0.1);
+        };
+
+        const birdInterval = setInterval(() => {
+            const h = new Date().getHours();
+            const chance = h >= 5 && h < 9 ? 0.7 : h >= 9 && h < 17 ? 0.4 : h >= 17 && h < 19 ? 0.3 : 0.05;
+            if (Math.random() < chance) createBirdChirp();
+        }, 2000);
+
+        const createCricket = () => {
+            const osc = context.createOscillator();
+            const gain = context.createGain();
+            osc.type = 'square';
+            osc.frequency.value = 4000;
+            const t = context.currentTime;
+            for (let i = 0; i < 8; i++) {
+                gain.gain.setValueAtTime(0, t + i * 0.1);
+                gain.gain.linearRampToValueAtTime(0.02, t + i * 0.1 + 0.01);
+                gain.gain.linearRampToValueAtTime(0, t + i * 0.1 + 0.05);
+            }
+            osc.connect(gain); gain.connect(masterGain);
+            osc.start(t); osc.stop(t + 1);
+        };
+
+        const cricketInterval = setInterval(() => {
+            const h = new Date().getHours();
+            const chance = h >= 19 || h < 5 ? 0.7 : h >= 17 ? 0.4 : h >= 5 && h < 7 ? 0.2 : 0.05;
+            if (Math.random() < chance) createCricket();
+        }, 3000);
+
+        masterGain.connect(context.destination);
+        setAmbientGain(masterGain);
+
+        return () => {
+            try { whiteNoise.stop(); } catch(e) {}
+            clearInterval(birdInterval);
+            clearInterval(cricketInterval);
+            context.close();
+        };
+    }, []);
+
+    const playDiscoverySound = (rarity) => {
+        if (!audioContext) return;
+        if (rarity < 0.7) {
+            const osc = audioContext.createOscillator();
+            const gain = audioContext.createGain();
+            osc.type = 'sine'; osc.frequency.value = 1500;
+            gain.gain.setValueAtTime(0, audioContext.currentTime);
+            gain.gain.linearRampToValueAtTime(0.05, audioContext.currentTime + 0.01);
+            gain.gain.exponentialRampToValueAtTime(0.001, audioContext.currentTime + 0.15);
+            osc.connect(gain); gain.connect(audioContext.destination);
+            osc.start(); osc.stop(audioContext.currentTime + 0.15);
+        } else if (rarity < 0.9) {
+            for (let i = 0; i < 2; i++) {
+                const osc = audioContext.createOscillator();
+                const gain = audioContext.createGain();
+                osc.type = 'sine'; osc.frequency.value = 2000 + i * 500;
+                const t = audioContext.currentTime + i * 0.05;
+                gain.gain.setValueAtTime(0, t);
+                gain.gain.linearRampToValueAtTime(0.04, t + 0.01);
+                gain.gain.exponentialRampToValueAtTime(0.001, t + 0.2);
+                osc.connect(gain); gain.connect(audioContext.destination);
+                osc.start(t); osc.stop(t + 0.2);
+            }
+        } else {
+            const osc1 = audioContext.createOscillator();
+            const osc2 = audioContext.createOscillator();
+            const g1 = audioContext.createGain();
+            const g2 = audioContext.createGain();
+            const filter = audioContext.createBiquadFilter();
+            osc1.type = 'sine'; osc1.frequency.value = 800;
+            osc2.type = 'sine'; osc2.frequency.value = 1200;
+            filter.type = 'lowpass'; filter.frequency.value = 4000;
+            [g1, g2].forEach(g => {
+                g.gain.setValueAtTime(0, audioContext.currentTime);
+                g.gain.linearRampToValueAtTime(0.03, audioContext.currentTime + 0.05);
+                g.gain.exponentialRampToValueAtTime(0.001, audioContext.currentTime + 0.8);
+            });
+            osc1.connect(g1); osc2.connect(g2);
+            g1.connect(filter); g2.connect(filter);
+            filter.connect(audioContext.destination);
+            osc1.start(); osc2.start();
+            osc1.stop(audioContext.currentTime + 0.8);
+            osc2.stop(audioContext.currentTime + 0.8);
+        }
+    };
+
+    useEffect(() => {
+        if (!ambientGain || !audioContext) return;
+        if (gameState === 'exploring') {
+            const vol = timeOfDay === 'night' || timeOfDay === 'evening' ? 0.15
+                      : timeOfDay === 'dawn' || timeOfDay === 'dusk' ? 0.12 : 0.1;
+            ambientGain.gain.linearRampToValueAtTime(vol, audioContext.currentTime + 1);
+        } else {
+            ambientGain.gain.linearRampToValueAtTime(0, audioContext.currentTime + 1);
+        }
+    }, [gameState, ambientGain, audioContext, timeOfDay]);
+
+    const locationSuggestions = [
+        'backyard','soccer field','golf course','school playground','picnic area',
+        'meadow','city park','rooftop garden','abandoned lot','zen garden',
+        'dog park','highway rest stop','church grounds','college quad',
+        'botanical garden','festival grounds','mini-golf course','baseball diamond',
+        'cemetery',"neighbor's perfect lawn",'Singapore botanical gardens',
+        'New York Central Park','Tokyo Imperial Gardens','London Hyde Park',
+        'Sydney Royal Botanic Garden','Paris Luxembourg Gardens','Barcelona Park Güell',
+        'Vancouver Stanley Park','Beijing Temple of Heaven Park','Dubai Zabeel Park'
+    ];
+
+    const shuffleLocation = () => {
+        const cur = locationSuggestions.indexOf(location);
+        let next;
+        do { next = Math.floor(Math.random() * locationSuggestions.length); }
+        while (next === cur && locationSuggestions.length > 1);
+        setLocation(locationSuggestions[next]);
+    };
+
+    useEffect(() => {
+        const link = document.createElement('link');
+        link.href = 'https://fonts.googleapis.com/css2?family=Quicksand:wght@300;400;500;600&display=swap';
+        link.rel = 'stylesheet';
+        document.head.appendChild(link);
+        return () => document.head.removeChild(link);
+    }, []);
+
+    useEffect(() => {
+        const update = () => {
+            const h = new Date().getHours();
+            if (h >= 5 && h < 7) setTimeOfDay('dawn');
+            else if (h >= 7 && h < 10) setTimeOfDay('morning');
+            else if (h >= 10 && h < 17) setTimeOfDay('day');
+            else if (h >= 17 && h < 19) setTimeOfDay('dusk');
+            else if (h >= 19 && h < 21) setTimeOfDay('evening');
+            else setTimeOfDay('night');
+        };
+        update();
+        const iv = setInterval(update, 60000);
+        return () => clearInterval(iv);
+    }, []);
+
+    useEffect(() => {
+        if (!timerActive) return;
+        const start = Date.now() - elapsedTime * 1000;
+        const iv = setInterval(() => setElapsedTime(Math.floor((Date.now() - start) / 1000)), 1000);
+        return () => clearInterval(iv);
+    }, [timerActive]);
+
+    const formatTime = (s) => `${Math.floor(s/60)}:${(s%60).toString().padStart(2,'0')}`;
+
+    const generateGrassColor = (tod) => {
+        let h, s, l;
+        switch(tod) {
+            case 'dawn':    h=95+Math.random()*20;  s=50+Math.random()*20; l=30+Math.random()*15; break;
+            case 'morning': h=100+Math.random()*30; s=60+Math.random()*20; l=25+Math.random()*20; break;
+            case 'day':     h=100+Math.random()*30; s=70+Math.random()*20; l=25+Math.random()*20; break;
+            case 'dusk':    h=85+Math.random()*20;  s=40+Math.random()*20; l=20+Math.random()*15; break;
+            case 'evening': h=90+Math.random()*20;  s=30+Math.random()*20; l=15+Math.random()*10; break;
+            case 'night':   h=100+Math.random()*20; s=20+Math.random()*10; l=10+Math.random()*10; break;
+            default:        h=100+Math.random()*30; s=70; l=25+Math.random()*20;
+        }
+        return `hsl(${h},${s}%,${l}%)`;
+    };
+
+    useEffect(() => {
+        const handleResize = () => setDimensions({ width: window.innerWidth, height: window.innerHeight });
+        window.addEventListener('resize', handleResize);
+        return () => window.removeEventListener('resize', handleResize);
+    }, []);
+
+    useEffect(() => {
+        const margin = 100;
+        setDiscoveryPoints(Array.from({length:5}, () => ({
+            x: margin + Math.random() * (dimensions.width - 2*margin),
+            y: dimensions.height - 10 - Math.random() * 150,
+            discovered: false,
+            rarity: Math.random()
+        })));
+    }, [dimensions]);
+
+    useEffect(() => {
+        const count = Math.floor((dimensions.width * dimensions.height) / 500);
+        const blades = Array.from({length:count}, () => ({
+            x: Math.random() * dimensions.width,
+            baseY: dimensions.height - 10 - Math.random() * 200,
+            height: 40 + Math.random() * 60,
+            angle: 0, targetAngle: 0,
+            width: 2 + Math.random() * 3,
+            sway: Math.random() * Math.PI * 2,
+            swaySpeed: 0.02 + Math.random() * 0.03,
+            swayIntensity: 0.01 + Math.random() * 0.03,
+            tension: 0.05 + Math.random() * 0.05,
+            color: generateGrassColor(timeOfDay)
+        }));
+        const edge = Array.from({length:Math.floor(count/4)}, () => ({
+            x: Math.random() * dimensions.width,
+            baseY: dimensions.height + Math.random() * 50,
+            height: 60 + Math.random() * 80,
+            angle: 0, targetAngle: 0,
+            width: 2 + Math.random() * 3,
+            sway: Math.random() * Math.PI * 2,
+            swaySpeed: 0.02 + Math.random() * 0.03,
+            swayIntensity: 0.01 + Math.random() * 0.03,
+            tension: 0.05 + Math.random() * 0.05,
+            color: `hsl(${100+Math.random()*30},70%,${25+Math.random()*20}%)`
+        }));
+        setGrass([...blades, ...edge]);
+    }, [dimensions, timeOfDay]);
+
+    // Animation loop
+    useEffect(() => {
+        const canvas = canvasRef.current;
+        if (!canvas) return;
+        const ctx = canvas.getContext('2d');
+        let raf;
+
+        const animate = () => {
+            ctx.clearRect(0, 0, dimensions.width, dimensions.height);
+
+            const grad = ctx.createLinearGradient(0, 0, 0, dimensions.height);
+            const stops = {
+                dawn:    ['#FF6B6B','#FFB88C','#FFE0B2','#90CFA4'],
+                morning: ['#87CEEB','#B2EBF2','#B2EBF2','#B9E3BD'],
+                day:     ['#4DA6FF','#87CEEB','#87CEEB','#A1D7A9'],
+                dusk:    ['#FF8C42','#FFA872','#91A6B4','#70997C'],
+                evening: ['#355C7D','#6C5B7B','#C06C84','#4A6F54'],
+                night:   ['#0B1A2A','#183049','#2A4D69','#203A2E'],
+            };
+            const s = stops[timeOfDay] || stops.day;
+            [[0,s[0]],[0.3,s[1]],[0.7,s[2]],[1,s[3]]].forEach(([p,c]) => grad.addColorStop(p,c));
+            ctx.fillStyle = grad;
+            ctx.fillRect(0, 0, dimensions.width, dimensions.height);
+
+            if (timeOfDay === 'night') {
+                if (!stars.current) {
+                    stars.current = Array.from({length:100}, () => ({
+                        x: Math.random()*dimensions.width,
+                        y: Math.random()*dimensions.height*0.7,
+                        size: Math.random()*1.5,
+                        baseAlpha: Math.random()*0.3+0.7,
+                        twinkleSpeed: Math.random()*0.0005+0.0002
+                    }));
+                }
+                const t = Date.now()*0.001;
+                stars.current.forEach(st => {
+                    ctx.fillStyle = `rgba(255,255,255,${st.baseAlpha*(Math.sin(t*st.twinkleSpeed)*0.2+0.8)})`;
+                    ctx.beginPath();
+                    ctx.arc(st.x, st.y, st.size, 0, Math.PI*2);
+                    ctx.fill();
+                });
+            } else {
+                stars.current = null;
+            }
+
+            if (timeOfDay === 'night' || timeOfDay === 'evening') {
+                ctx.fillStyle = 'rgba(255,255,255,0.9)';
+                ctx.beginPath();
+                ctx.arc(dimensions.width*0.8, dimensions.height*0.2, 40, 0, Math.PI*2);
+                ctx.fill();
+                ctx.fillStyle = timeOfDay === 'night' ? '#0B1A2A' : '#355C7D';
+                ctx.beginPath();
+                ctx.arc(dimensions.width*0.8+10, dimensions.height*0.2, 40, 0, Math.PI*2);
+                ctx.fill();
+            }
+
+            if (timeOfDay === 'day' || timeOfDay === 'morning') {
+                ctx.fillStyle = '#FFD700';
+                ctx.beginPath();
+                ctx.arc(dimensions.width*0.8, dimensions.height*0.2, 40, 0, Math.PI*2);
+                ctx.fill();
+                for (let i = 0; i < 12; i++) {
+                    const a = i*Math.PI*2/12;
+                    ctx.beginPath();
+                    ctx.moveTo(dimensions.width*0.8+Math.cos(a)*50, dimensions.height*0.2+Math.sin(a)*50);
+                    ctx.lineTo(dimensions.width*0.8+Math.cos(a)*60, dimensions.height*0.2+Math.sin(a)*60);
+                    ctx.strokeStyle = '#FFD700'; ctx.lineWidth = 3; ctx.stroke();
+                }
+            }
+
+            grass.forEach(blade => {
+                blade.angle += (blade.targetAngle - blade.angle) * blade.tension;
+                blade.sway += blade.swaySpeed;
+                const sway = Math.sin(blade.sway) * blade.swayIntensity;
+                ctx.save();
+                ctx.translate(blade.x, blade.baseY);
+                ctx.rotate(blade.angle + sway);
+                ctx.beginPath();
+                ctx.moveTo(0, 0);
+                ctx.quadraticCurveTo(blade.width/2, -blade.height/2, 0, -blade.height);
+                ctx.quadraticCurveTo(-blade.width/2, -blade.height/2, 0, 0);
+                ctx.fillStyle = blade.color;
+                ctx.fill();
+                ctx.restore();
+            });
+
+            if (gameState === 'exploring') {
+                discoveries.forEach(d => {
+                    ctx.save();
+                    ctx.globalAlpha = d.opacity;
+                    ctx.font = `bold ${18+d.scale*6}px Arial`;
+                    const tc = d.color==='#4CAF50'?'#388E3C':d.color==='#2196F3'?'#1976D2':d.color==='#FFD700'?'#B8860B':d.color;
+                    ctx.fillStyle = tc;
+                    ctx.strokeStyle = 'white';
+                    ctx.lineWidth = 4; ctx.lineJoin = 'round'; ctx.miterLimit = 2;
+                    ctx.textAlign = 'center';
+                    ctx.shadowColor = 'rgba(0,0,0,0.3)'; ctx.shadowBlur = 8;
+                    ctx.shadowOffsetX = 2; ctx.shadowOffsetY = 2;
+                    d.text.split('\n').forEach((line, i) => {
+                        ctx.strokeText(line, d.x, d.y+i*25);
+                        ctx.fillText(line, d.x, d.y+i*25);
+                    });
+                    ctx.restore();
+                });
+            }
+
+            raf = requestAnimationFrame(animate);
+        };
+        animate();
+        return () => cancelAnimationFrame(raf);
+    }, [grass, dimensions, discoveries, gameState, timeOfDay]);
+
+    useEffect(() => {
+        if (gameState !== 'exploring') return;
+        const iv = setInterval(() => {
+            setDiscoveries(prev =>
+                prev.map(d => ({...d, y:d.y-1.5, opacity:d.opacity-0.005, scale:d.scale+0.01}))
+                    .filter(d => d.opacity > 0)
+            );
+        }, 16);
+        return () => clearInterval(iv);
+    }, [gameState]);
+
+    const displayDiscovery = (text, x, y, color) => {
+        const maxLen = 20;
+        let display = text;
+        if (text.length > maxLen) {
+            const words = text.split(' ');
+            const l1 = [], l2 = [];
+            let cur = l1;
+            words.forEach(w => {
+                if (cur === l1 && l1.join(' ').length + w.length > maxLen) cur = l2;
+                cur.push(w);
+            });
+            display = l1.join(' ') + '\n' + l2.join(' ');
+        }
+        const xPos = Math.max(150, Math.min(x, dimensions.width-150));
+        setDiscoveries(prev => [...prev, { text:`You found ${display}`, x:xPos, y:y-60, opacity:1, scale:0, color }]);
+    };
+
+    const generateClaudeDiscovery = async (x, y, rarity) => {
+        if (isGenerating) return;
+        setIsGenerating(true);
+        try {
+            const seed = Math.floor(Math.random()*10000);
+            const tod = timeOfDay;
+
+            const timeEx = {
+                dawn:    { c:['a dew drop','a spider web'],    u:['bird eggs','a sunrise photo'],         r:['a meteor fragment','a rare dawn flower'] },
+                morning: { c:['a coffee cup lid','morning paper'], u:['lost homework','crow feather'],    r:['a golden sunrise crystal'] },
+                day:     { c:['a bottle cap','a lost button'], u:['sunglasses','a frisbee fragment'],     r:['a sun-bleached artifact'] },
+                dusk:    { c:['a ticket stub','a dog toy'],    u:['a sunset photo','a dusk petal'],       r:['a sunset agate','twilight moth wing'] },
+                evening: { c:['a dinner napkin','a receipt'],  u:['a concert ticket','party invite'],     r:['a star emerald'] },
+                night:   { c:['a glow stick','a battery'],     u:['a moonstone chip','a stargazer map'],  r:['a fallen star fragment','lunar crystal'] },
+            }[tod] || { c:[], u:[], r:[] };
+
+            let locCtx = ' in grass', cEx = [], uEx = [], rEx = [];
+            if (location) {
+                const ll = location.toLowerCase();
+                if (ll.includes('soccer')||ll.includes('football')) {
+                    locCtx=' in soccer field grass'; cEx=['a missing cleat stud','a shin guard strap']; uEx=["a captain's armband",'a net thread']; rEx=['a World Cup ticket stub'];
+                } else if (ll.includes('backyard')||ll.includes('back yard')) {
+                    locCtx=' in backyard grass'; cEx=['a clothes pin','a pet collar tag']; uEx=['a buried dog toy','a wedding ring']; rEx=["grandmother's lost thimble"];
+                } else if (ll.includes('golf')) {
+                    locCtx=' in golf course grass'; cEx=['a broken tee','a ball marker']; uEx=['a pro scorecard','a yardage book page']; rEx=["Arnold Palmer's cigar tip"];
+                } else if (ll.includes('school')||ll.includes('playground')) {
+                    locCtx=' in school playground grass'; cEx=['a lunch quarter','a hair tie']; uEx=['a retainer','a class ring']; rEx=['a vintage marble shooter'];
+                } else if (ll.includes('meadow')) {
+                    locCtx=' in meadow grass'; cEx=['a bird feather','an acorn cap']; uEx=['an arrowhead','a snake skin piece']; rEx=['a fossil impression','a natural crystal'];
+                } else if (ll.includes('park')) {
+                    locCtx=' in park grass'; cEx=['a dog tag','a frisbee chip']; uEx=['a festival wristband']; rEx=['a vintage arcade token'];
+                } else if (ll.includes('singapore')||ll.includes('botanical')) {
+                    locCtx=' in Singapore botanical garden'; cEx=['a tropical flower petal']; uEx=['a heritage plaque piece']; rEx=['a Raffles-era trade coin'];
+                } else if (ll.includes('central park')||ll.includes('new york')) {
+                    locCtx=' in Central Park grass'; cEx=['a hot dog wrapper','a metro card']; uEx=['a Broadway ticket stub']; rEx=['a 1920s speakeasy token'];
+                } else if (ll.includes('tokyo')||ll.includes('imperial')) {
+                    locCtx=' in Tokyo Imperial Garden'; cEx=['a cherry blossom petal']; uEx=['a tea ceremony ticket']; rEx=['an Edo period coin'];
+                } else if (ll.includes('hyde')||ll.includes('london')) {
+                    locCtx=' in Hyde Park grass'; cEx=['a pigeon feather']; uEx=['a palace guard button']; rEx=['a Victorian jewelry piece'];
+                } else {
+                    locCtx=` in ${location} grass`; cEx=['a bottle cap','a coin']; uEx=['a key','an earring']; rEx=['an antique coin'];
+                }
+            }
+
+            let prompt, color;
+            if (rarity < 0.7) {
+                const ex = [...cEx,...timeEx.c]; const eg = ex[Math.floor(Math.random()*ex.length)];
+                prompt = `Generate a common, realistic object someone would actually find${locCtx} during ${tod}. 2-4 words. Include "a" or "an". Lowercase. Example: "${eg}". Seed:${seed}`;
+                color = '#4CAF50';
+            } else if (rarity < 0.9) {
+                const ex = [...uEx,...timeEx.u]; const eg = ex[Math.floor(Math.random()*ex.length)];
+                prompt = `Generate an uncommon but real object someone might find${locCtx} during ${tod}. 2-5 words. Lowercase. Example: "${eg}". Seed:${seed}`;
+                color = '#2196F3';
+            } else {
+                const ex = [...rEx,...timeEx.r]; const eg = ex[Math.floor(Math.random()*ex.length)];
+                prompt = `Generate a rare exciting object someone could find${locCtx} during ${tod}. 2-5 words. Lowercase. Example: "${eg}". Seed:${seed}`;
+                color = '#FFD700';
+            }
+
+            const avoid = recentDiscoveries.slice(-3);
+            const fullPrompt = prompt + (avoid.length ? ` Avoid: "${avoid.join('","')}".` : '');
+
+            const response = await window.claude.complete(fullPrompt);
+            const clean = response.trim().toLowerCase();
+
+            const count = discoveryTracker[clean] || 0;
+            let finalText = clean;
+            if (count >= 3) {
+                const retry = await window.claude.complete(prompt + ` Avoid: "${clean}","${avoid.join('","')}". Be different.`);
+                finalText = retry.trim().toLowerCase();
+            }
+
+            const newId = Date.now() + Math.random();
+            setDiscoveryTracker(prev => ({...prev, [finalText]:(prev[finalText]||0)+1}));
+            setRecentDiscoveries(prev => [...prev, finalText].slice(-5));
+            setCollectedDiscoveries(prev => [...prev, { id:newId, text:finalText, color, time:elapsedTime, rarity:rarity<0.7?'common':rarity<0.9?'uncommon':'rare' }]);
+            displayDiscovery(finalText, x, y, color);
+            playDiscoverySound(rarity);
+
+        } catch(err) {
+            console.error(err);
+            const fb = ['a tiny treasure','a small wonder','a curious find','a hidden gem'];
+            setDiscoveries(prev => [...prev, { text:`You found ${fb[Math.floor(Math.random()*fb.length)]}`, x, y:y-60, opacity:1, scale:0, color:'#9C27B0' }]);
+        } finally {
+            setTimeout(() => setIsGenerating(false), 200);
+        }
+    };
+
+    const handleInteraction = (e) => {
+        if (gameState !== 'exploring') return;
+        const rect = canvasRef.current.getBoundingClientRect();
+        const x = e.clientX - rect.left;
+        const y = e.clientY - rect.top;
+
+        discoveryPoints.forEach((pt, i) => {
+            if (!pt.discovered && Math.hypot(pt.x-x, pt.y-y) < 50) {
+                generateClaudeDiscovery(pt.x, pt.y, pt.rarity);
+                const margin = 100;
+                const np = [...discoveryPoints];
+                np[i] = { x:margin+Math.random()*(dimensions.width-2*margin), y:dimensions.height-10-Math.random()*150, discovered:false, rarity:Math.random() };
+                setDiscoveryPoints(np);
+            }
+        });
+
+        setGrass(prev => prev.map(b => {
+            const dist = Math.hypot(b.x-x, b.baseY-y);
+            if (dist < 100) {
+                const str = (100-dist)/100;
+                return {...b, targetAngle: Math.atan2(b.x-x, 50)*str*0.5};
+            }
+            return {...b, targetAngle:0};
+        }));
+    };
+
+    const handleMouseLeave = () => setGrass(prev => prev.map(b => ({...b, targetAngle:0})));
+
+    const startExploring = () => {
+        if (audioContext?.state === 'suspended') audioContext.resume();
+        setFadeOut(true);
+        setTimeout(() => { setGameState('exploring'); setTimerActive(true); setFadeOut(false); }, 500);
+    };
+
+    const goInside = () => {
+        setFadeOut(true);
+        setTimeout(() => { setGameState('summary'); setTimerActive(false); setFadeOut(false); }, 500);
+    };
+
+    const resetGame = () => {
+        setFadeOut(true);
+        setTimeout(() => {
+            setGameState('start'); setElapsedTime(0); setCollectedDiscoveries([]);
+            setDiscoveries([]); setLocation(''); setDiscoveryTracker({}); setRecentDiscoveries([]);
+            setMintedItems({}); setMintingId(null); setFadeOut(false);
+        }, 500);
+    };
+
+    // NFT
+    const connectWallet = async () => {
+        if (window.ethereum) {
+            try {
+                const accounts = await window.ethereum.request({ method:'eth_requestAccounts' });
+                setWalletAddress(accounts[0]);
+            } catch(e) { console.error('Wallet rejected'); }
+        } else {
+            // Demo mode — no MetaMask
+            setWalletAddress('0x' + Array.from({length:40},()=>Math.floor(Math.random()*16).toString(16)).join(''));
+        }
+    };
+
+    const mintDiscovery = async (discovery) => {
+        if (!walletAddress) { await connectWallet(); return; }
+        setMintingId(discovery.id);
+        await new Promise(r => setTimeout(r, 1800 + Math.random()*1200));
+        const tx = '0x' + Array.from({length:64},()=>Math.floor(Math.random()*16).toString(16)).join('');
+        setMintedItems(prev => ({...prev, [discovery.id]: tx}));
+        setMintingId(null);
+    };
+
+    const mintAll = async () => {
+        if (!walletAddress) { await connectWallet(); }
+        for (const d of collectedDiscoveries) {
+            if (!mintedItems[d.id] && mintingId !== d.id) await mintDiscovery(d);
+        }
+    };
+
+    const shortAddr = walletAddress ? walletAddress.slice(0,6)+'...'+walletAddress.slice(-4) : '';
+    const mintedCount = Object.keys(mintedItems).length;
+
+    const qs = { fontFamily:'Quicksand, sans-serif' };
+    const nightOverlay = timeOfDay==='night' ? 'bg-black/20' : 'bg-black/5';
+
+    return (
+        <div className="fixed inset-0 overflow-hidden">
+            <canvas
+                ref={canvasRef}
+                width={dimensions.width}
+                height={dimensions.height}
+                className="absolute inset-0 cursor-pointer"
+                onMouseMove={handleInteraction}
+                onTouchMove={(e)=>{e.preventDefault();handleInteraction(e.touches[0]);}}
+                onMouseLeave={handleMouseLeave}
+                onTouchEnd={handleMouseLeave}
+            />
+
+            {/* START */}
+            {gameState==='start' && (
+                <div className={`absolute inset-0 flex items-center justify-center ${nightOverlay} backdrop-blur-md transition-opacity duration-500 ${fadeOut?'opacity-0':'opacity-100'}`}>
+                    <div className="text-center p-8 bg-white/40 backdrop-blur-lg rounded-3xl shadow-2xl max-w-md mx-4 border border-white/40">
+                        <h1 className="text-4xl font-light mb-3 text-gray-700 tracking-tight" style={qs}>Time to step outside</h1>
+                        <p className="text-lg text-gray-600 mb-6 leading-relaxed font-light" style={qs}>
+                            {timeOfDay==='night'?"The night grass holds its secrets...":timeOfDay==='dawn'?"Dawn breaks, revealing hidden treasures...":timeOfDay==='evening'?"Evening settles, bringing new mysteries...":timeOfDay==='dusk'?"Twilight transforms the grass...":"There's magic waiting in the grass..."}
+                        </p>
+                        <div className="mb-6 relative">
+                            <input
+                                type="text"
+                                value={location}
+                                onChange={e=>setLocation(e.target.value)}
+                                placeholder="where will you explore?"
+                                className="w-full px-4 py-3 text-center bg-white/30 border border-white/40 rounded-full text-gray-700 placeholder-gray-500 focus:outline-none focus:ring-2 focus:ring-white/40 font-light"
+                                style={qs}
+                            />
+                            <button onClick={shuffleLocation} className="absolute right-3 top-1/2 -translate-y-1/2 p-2 text-gray-600 hover:text-gray-800 transition-colors" title="Shuffle">
+                                <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15"/>
+                                </svg>
+                            </button>
+                        </div>
+                        <button onClick={startExploring} className="bg-white/50 hover:bg-white/60 text-gray-700 font-medium py-4 px-8 rounded-full text-xl shadow-lg hover:shadow-xl hover:-translate-y-1 active:translate-y-0 transition-all duration-300 border border-white/40 mb-4" style={qs}>
+                            Go touch some grass
+                        </button>
+                        <div>
+                            {walletAddress
+                                ? <p className="text-xs text-gray-500 font-light" style={qs}>🟢 {shortAddr} — ready to mint</p>
+                                : <button onClick={connectWallet} className="text-xs text-gray-500 hover:text-gray-700 font-light underline underline-offset-2 transition-colors" style={qs}>Connect wallet to mint finds as NFTs</button>
+                            }
+                        </div>
+                    </div>
+                </div>
+            )}
+
+            {/* EXPLORING */}
+            {gameState==='exploring' && (
+                <div className={`absolute top-6 left-6 bg-white/40 backdrop-blur-md rounded-2xl p-5 shadow-xl border border-white/40 ${fadeOut?'opacity-0':'opacity-100'} transition-opacity duration-500`}>
+                    {[
+                        { icon:<path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z"/>, label:'Time outside', value:formatTime(elapsedTime) },
+                        { icon:timeOfDay==='night'||timeOfDay==='evening'
+                            ? <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M20.354 15.354A9 9 0 018.646 3.646 9.003 9.003 0 0012 21a9.003 9.003 0 008.354-5.646z"/>
+                            : <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M12 3v1m0 16v1m9-9h-1M4 12H3m15.364 6.364l-.707-.707M6.343 6.343l-.707-.707m12.728 0l-.707.707M6.343 17.657l-.707.707M16 12a4 4 0 11-8 0 4 4 0 018 0z"/>,
+                          label:'Time of day', value:timeOfDay.charAt(0).toUpperCase()+timeOfDay.slice(1) },
+                        { icon:<path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M5 3v4M3 5h4M6 17v4m-2-2h4m5-16l2.286 6.857L21 12l-5.714 2.143L13 21l-2.286-6.857L5 12l5.714-2.143L13 3z"/>, label:'Discoveries', value:collectedDiscoveries.length },
+                    ].map((row,i) => (
+                        <div key={i} className="flex items-center gap-4 mb-4">
+                            <div className="bg-white/50 rounded-full p-3">
+                                <svg className="w-6 h-6 text-gray-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">{row.icon}</svg>
+                            </div>
+                            <div>
+                                <p className="text-sm text-gray-600 font-light" style={qs}>{row.label}</p>
+                                <p className="text-2xl font-normal text-gray-700" style={qs}>{row.value}</p>
+                            </div>
+                        </div>
+                    ))}
+                    {location && (
+                        <div className="flex items-center gap-4 mb-4">
+                            <div className="bg-white/50 rounded-full p-3">
+                                <svg className="w-6 h-6 text-gray-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M17.657 16.657L13.414 20.9a1.998 1.998 0 01-2.827 0l-4.244-4.243a8 8 0 1111.314 0z"/>
+                                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M15 11a3 3 0 11-6 0 3 3 0 016 0z"/>
+                                </svg>
+                            </div>
+                            <div>
+                                <p className="text-sm text-gray-600 font-light" style={qs}>Location</p>
+                                <p className="text-xl font-normal text-gray-700" style={qs}>{location}</p>
+                            </div>
+                        </div>
+                    )}
+                    <button onClick={goInside} className="w-full bg-white/50 hover:bg-white/60 text-gray-700 font-medium py-3 px-6 rounded-xl shadow-md hover:shadow-lg hover:-translate-y-0.5 active:translate-y-0 transition-all duration-300 border border-white/40" style={qs}>
+                        Go back inside
+                    </button>
+                </div>
+            )}
+
+            {/* SUMMARY */}
+            {gameState==='summary' && (
+                <div className={`absolute inset-0 flex items-center justify-center ${nightOverlay} backdrop-blur-md transition-opacity duration-500 ${fadeOut?'opacity-0':'opacity-100'}`}>
+                    <div className="bg-white/40 backdrop-blur-lg rounded-3xl shadow-2xl p-8 max-w-md w-full mx-4 border border-white/40">
+                        <h2 className="text-3xl font-light mb-4 text-gray-700 text-center" style={qs}>
+                            {location ? `Your ${location} adventure` : 'Your grass adventure'}
+                        </h2>
+
+                        {/* Stats */}
+                        <div className="flex justify-between mb-4 p-4 bg-white/20 rounded-xl">
+                            {[['Time outside',formatTime(elapsedTime)],['Discoveries',collectedDiscoveries.length],['Minted',mintedCount]].map(([l,v],i,arr) => (
+                                <React.Fragment key={l}>
+                                    <div className="text-center flex-1">
+                                        <p className="text-xs text-gray-600 uppercase tracking-wider font-light" style={qs}>{l}</p>
+                                        <p className="text-2xl font-normal text-gray-700" style={qs}>{v}</p>
+                                    </div>
+                                    {i < arr.length-1 && <div className="w-px bg-white/30"/>}
+                                </React.Fragment>
+                            ))}
+                        </div>
+
+                        {/* Wallet row */}
+                        <div className="flex items-center justify-between mb-3 px-1">
+                            {walletAddress
+                                ? <p className="text-xs text-gray-500 font-light" style={qs}>🟢 {shortAddr}</p>
+                                : <button onClick={connectWallet} className="text-xs text-gray-500 hover:text-gray-700 font-light underline underline-offset-2" style={qs}>Connect wallet</button>
+                            }
+                            {walletAddress && mintedCount < collectedDiscoveries.length && (
+                                <button onClick={mintAll} className="text-xs bg-white/50 hover:bg-white/60 text-gray-600 px-3 py-1 rounded-full border border-white/40 font-light transition-all" style={qs}>
+                                    Mint all
+                                </button>
+                            )}
+                            {walletAddress && collectedDiscoveries.length > 0 && mintedCount === collectedDiscoveries.length && (
+                                <p className="text-xs text-emerald-600 font-light" style={qs}>✓ collection complete</p>
+                            )}
+                        </div>
+
+                        {/* Discoveries */}
+                        <div className="mb-6 max-h-64 overflow-y-auto bg-white/20 rounded-xl p-4 shadow-inner">
+                            {collectedDiscoveries.length === 0 ? (
+                                <p className="text-center text-gray-600 font-light py-8" style={qs}>Achievement unlocked:<br/>Professional grass avoider</p>
+                            ) : (
+                                ['rare','uncommon','common'].map(rl => {
+                                    const group = collectedDiscoveries.filter(d => d.rarity===rl);
+                                    if (!group.length) return null;
+                                    return (
+                                        <div key={rl} className="mb-4">
+                                            <p className="text-xs font-light text-gray-500 uppercase tracking-wider mb-2" style={qs}>{rl} finds</p>
+                                            {group.map(disc => (
+                                                <div key={disc.id} className={`mb-2 p-3 rounded-lg flex items-center gap-2 ${rl==='rare'?'bg-yellow-100/40':rl==='uncommon'?'bg-blue-100/40':'bg-green-100/40'}`}>
+                                                    <span className="flex-1 text-sm font-normal text-gray-700" style={qs}>{disc.text}</span>
+                                                    <span className="text-xs text-gray-400 shrink-0" style={qs}>{formatTime(disc.time)}</span>
+                                                    {walletAddress && (
+                                                        mintedItems[disc.id]
+                                                            ? <a href={`https://etherscan.io/tx/${mintedItems[disc.id]}`} target="_blank" rel="noopener noreferrer" className="text-xs text-emerald-600 font-light shrink-0 hover:underline" style={qs}>✓ minted</a>
+                                                            : mintingId===disc.id
+                                                                ? <span className="text-xs text-gray-400 font-light shrink-0 animate-pulse" style={qs}>minting…</span>
+                                                                : <button onClick={()=>mintDiscovery(disc)} className="text-xs bg-white/60 hover:bg-white/80 text-gray-600 px-2 py-0.5 rounded-full border border-white/50 font-light shrink-0 transition-all" style={qs}>mint</button>
+                                                    )}
+                                                </div>
+                                            ))}
+                                        </div>
+                                    );
+                                })
+                            )}
+                        </div>
+
+                        <button onClick={resetGame} className="w-full bg-white/50 hover:bg-white/60 text-gray-700 font-medium py-3 px-6 rounded-full shadow-lg hover:shadow-xl hover:-translate-y-1 active:translate-y-0 transition-all duration-300 border border-white/40" style={qs}>
+                            Go outside again
+                        </button>
+                    </div>
+                </div>
+            )}
+        </div>
+    );
+};
+
+ReactDOM.createRoot(document.getElementById('root')).render(<InteractiveGrass/>);
+</script>
+</body>
+</html>
