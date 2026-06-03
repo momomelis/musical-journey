@@ -8,6 +8,7 @@
     <script src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js" crossorigin></script>
     <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
     <script src="https://cdn.tailwindcss.com"></script>
+    <script src="https://cdn.ethers.io/lib/ethers-5.2.umd.min.js"></script>
     <style>* { margin:0; padding:0; box-sizing:border-box; } body { overflow:hidden; }</style>
 </head>
 <body>
@@ -53,6 +54,12 @@ if (!window.claude) {
 <script type="text/babel">
 const { useState, useEffect, useRef } = React;
 
+const GRASS_ABI = [
+    "function mintDiscovery(address to, string name, string rarity, string location) public returns (uint256)"
+];
+const GRASS_CONTRACT = localStorage.getItem('grassContractAddress') || '';
+const GRASS_NETWORK = localStorage.getItem('grassNetwork') || 'base';
+
 const InteractiveGrass = () => {
     const canvasRef = useRef(null);
     const stars = useRef(null);
@@ -76,6 +83,8 @@ const InteractiveGrass = () => {
     const [walletAddress, setWalletAddress] = useState('');
     const [mintedItems, setMintedItems] = useState({});
     const [mintingId, setMintingId] = useState(null);
+    const [contractAddress, setContractAddress] = useState(GRASS_CONTRACT);
+    const [showContractSetup, setShowContractSetup] = useState(!GRASS_CONTRACT);
 
     // Audio
     useEffect(() => {
@@ -618,10 +627,33 @@ const InteractiveGrass = () => {
 
     const mintDiscovery = async (discovery) => {
         if (!walletAddress) { await connectWallet(); return; }
+        if (!contractAddress) { setShowContractSetup(true); return; }
+
         setMintingId(discovery.id);
-        await new Promise(r => setTimeout(r, 1800 + Math.random()*1200));
-        const tx = '0x' + Array.from({length:64},()=>Math.floor(Math.random()*16).toString(16)).join('');
-        setMintedItems(prev => ({...prev, [discovery.id]: tx}));
+        try {
+            if (window.ethereum && contractAddress) {
+                const provider = new ethers.providers.Web3Provider(window.ethereum);
+                const signer = provider.getSigner();
+                const contract = new ethers.Contract(contractAddress, GRASS_ABI, signer);
+
+                const tx = await contract.mintDiscovery(
+                    walletAddress,
+                    discovery.text,
+                    discovery.rarity,
+                    location || 'unknown'
+                );
+                const receipt = await tx.wait();
+                setMintedItems(prev => ({...prev, [discovery.id]: receipt.transactionHash}));
+            } else {
+                // Fallback: simulate if no real contract
+                await new Promise(r => setTimeout(r, 1800 + Math.random()*1200));
+                const fakeTx = '0x' + Array.from({length:64},()=>Math.floor(Math.random()*16).toString(16)).join('');
+                setMintedItems(prev => ({...prev, [discovery.id]: fakeTx}));
+            }
+        } catch(e) {
+            console.error('Mint error:', e);
+            alert('Mint failed: ' + e.message);
+        }
         setMintingId(null);
     };
 
@@ -677,11 +709,19 @@ const InteractiveGrass = () => {
                         <button onClick={startExploring} className="bg-white/50 hover:bg-white/60 text-gray-700 font-medium py-4 px-8 rounded-full text-xl shadow-lg hover:shadow-xl hover:-translate-y-1 active:translate-y-0 transition-all duration-300 border border-white/40 mb-4" style={qs}>
                             Go touch some grass
                         </button>
-                        <div>
+                        <div className="space-y-2">
                             {walletAddress
-                                ? <p className="text-xs text-gray-500 font-light" style={qs}>🟢 {shortAddr} — ready to mint</p>
-                                : <button onClick={connectWallet} className="text-xs text-gray-500 hover:text-gray-700 font-light underline underline-offset-2 transition-colors" style={qs}>Connect wallet to mint finds as NFTs</button>
+                                ? <p className="text-xs text-gray-500 font-light" style={qs}>🟢 {shortAddr}</p>
+                                : <button onClick={connectWallet} className="text-xs text-gray-500 hover:text-gray-700 font-light underline underline-offset-2 transition-colors block" style={qs}>Connect wallet</button>
                             }
+                            {!contractAddress && (
+                                <button onClick={() => setShowContractSetup(true)} className="text-xs text-amber-600 hover:text-amber-700 font-light underline underline-offset-2 transition-colors block" style={qs}>
+                                    Set contract address (Base)
+                                </button>
+                            )}
+                            {contractAddress && (
+                                <p className="text-xs text-emerald-600 font-light" style={qs}>✓ contract ready</p>
+                            )}
                         </div>
                     </div>
                 </div>
@@ -782,7 +822,7 @@ const InteractiveGrass = () => {
                                                     <span className="text-xs text-gray-400 shrink-0" style={qs}>{formatTime(disc.time)}</span>
                                                     {walletAddress && (
                                                         mintedItems[disc.id]
-                                                            ? <a href={`https://etherscan.io/tx/${mintedItems[disc.id]}`} target="_blank" rel="noopener noreferrer" className="text-xs text-emerald-600 font-light shrink-0 hover:underline" style={qs}>✓ minted</a>
+                                                            ? <a href={`https://basescan.org/tx/${mintedItems[disc.id]}`} target="_blank" rel="noopener noreferrer" className="text-xs text-emerald-600 font-light shrink-0 hover:underline" style={qs}>✓ minted</a>
                                                             : mintingId===disc.id
                                                                 ? <span className="text-xs text-gray-400 font-light shrink-0 animate-pulse" style={qs}>minting…</span>
                                                                 : <button onClick={()=>mintDiscovery(disc)} className="text-xs bg-white/60 hover:bg-white/80 text-gray-600 px-2 py-0.5 rounded-full border border-white/50 font-light shrink-0 transition-all" style={qs}>mint</button>
@@ -798,6 +838,39 @@ const InteractiveGrass = () => {
                         <button onClick={resetGame} className="w-full bg-white/50 hover:bg-white/60 text-gray-700 font-medium py-3 px-6 rounded-full shadow-lg hover:shadow-xl hover:-translate-y-1 active:translate-y-0 transition-all duration-300 border border-white/40" style={qs}>
                             Go outside again
                         </button>
+                    </div>
+                </div>
+            )}
+
+            {/* Contract Setup Modal */}
+            {showContractSetup && (
+                <div className={`absolute inset-0 flex items-center justify-center ${nightOverlay} backdrop-blur-md z-50 transition-opacity duration-500 ${fadeOut?'opacity-0':'opacity-100'}`}>
+                    <div className="bg-white/40 backdrop-blur-lg rounded-3xl shadow-2xl p-8 max-w-md w-full mx-4 border border-white/40">
+                        <h2 className="text-2xl font-light mb-4 text-gray-700" style={qs}>Configure Contract</h2>
+                        <p className="text-sm text-gray-600 mb-4 font-light" style={qs}>
+                            Deploy a contract on <strong>Base</strong> or paste your existing address:
+                        </p>
+                        <input
+                            type="text"
+                            placeholder="0x..."
+                            defaultValue={contractAddress}
+                            onChange={(e) => setContractAddress(e.target.value)}
+                            className="w-full px-4 py-3 mb-4 text-sm bg-white/30 border border-white/40 rounded-lg text-gray-700 placeholder-gray-500 focus:outline-none focus:ring-2 focus:ring-white/40 font-light"
+                            style={qs}
+                        />
+                        <div className="flex gap-3 mb-4">
+                            <a href="https://github.com/momomelis/musical-journey#deploy-grassdiscoveries-to-base" target="_blank" rel="noopener noreferrer" className="flex-1 text-center bg-purple-600 hover:bg-purple-500 text-white px-4 py-2 rounded-lg font-medium text-sm transition-all" style={qs}>
+                                Deploy Guide
+                            </a>
+                        </div>
+                        <div className="flex gap-3">
+                            <button onClick={() => { localStorage.setItem('grassContractAddress', contractAddress); localStorage.setItem('grassNetwork', 'base'); setShowContractSetup(false); }} className="flex-1 bg-emerald-600 hover:bg-emerald-500 text-white px-4 py-2 rounded-lg font-medium text-sm transition-all" style={qs}>
+                                Save
+                            </button>
+                            <button onClick={() => setShowContractSetup(false)} className="flex-1 bg-slate-500 hover:bg-slate-400 text-white px-4 py-2 rounded-lg font-medium text-sm transition-all" style={qs}>
+                                Cancel
+                            </button>
+                        </div>
                     </div>
                 </div>
             )}

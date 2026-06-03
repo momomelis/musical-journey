@@ -8,6 +8,7 @@
     <script src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js" crossorigin></script>
     <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
     <script src="https://cdn.tailwindcss.com"></script>
+    <script src="https://cdn.ethers.io/lib/ethers-5.2.umd.min.js"></script>
     <style>* { margin:0; padding:0; box-sizing:border-box; } body { overflow:hidden; }</style>
 </head>
 <body>
@@ -49,6 +50,12 @@ if (!window.claude) {
 <script type="text/babel">
 const { useState, useEffect, useRef } = React;
 
+const JUPITER_ABI = [
+    "function mintNetwork(address to, string title, uint256 tokenCount, uint256 connectionCount) public returns (uint256)"
+];
+const JUPITER_CONTRACT = localStorage.getItem('jupiterContractAddress') || '';
+const JUPITER_NETWORK = localStorage.getItem('jupiterNetwork') || 'base';
+
 const JupiterLendingViz = () => {
     const [placedTokens, setPlacedTokens] = useState([]);
     const [selectedToken, setSelectedToken] = useState(null);
@@ -59,6 +66,8 @@ const JupiterLendingViz = () => {
     const [mintedConfigs, setMintedConfigs] = useState({});
     const [mintingId, setMintingId] = useState(null);
     const [showHistory, setShowHistory] = useState(false);
+    const [contractAddress, setContractAddress] = useState(JUPITER_CONTRACT);
+    const [showContractSetup, setShowContractSetup] = useState(!JUPITER_CONTRACT);
     const canvasRef = useRef(null);
 
     const tokens = [
@@ -186,20 +195,52 @@ Provide JSON response:
 
     const mintConfig = async () => {
         if (!walletAddress) { await connectWallet(); return; }
+        if (!contractAddress) { setShowContractSetup(true); return; }
+
         const configId = Date.now();
         setMintingId(configId);
-        await new Promise(r => setTimeout(r, 1800 + Math.random() * 1200));
-        const tx = '0x' + Array.from({length:64},()=>Math.floor(Math.random()*16).toString(16)).join('');
-        setMintedConfigs(prev => ({
-            ...prev,
-            [configId]: {
-                tx,
-                title: analysis.title,
-                tokens: placedTokens.length,
-                connections: animatedConnections.length,
-                timestamp: new Date().toLocaleString()
+        try {
+            if (window.ethereum && contractAddress) {
+                const provider = new ethers.providers.Web3Provider(window.ethereum);
+                const signer = provider.getSigner();
+                const contract = new ethers.Contract(contractAddress, JUPITER_ABI, signer);
+
+                const tx = await contract.mintNetwork(
+                    walletAddress,
+                    analysis.title,
+                    placedTokens.length,
+                    animatedConnections.length
+                );
+                const receipt = await tx.wait();
+                setMintedConfigs(prev => ({
+                    ...prev,
+                    [configId]: {
+                        tx: receipt.transactionHash,
+                        title: analysis.title,
+                        tokens: placedTokens.length,
+                        connections: animatedConnections.length,
+                        timestamp: new Date().toLocaleString()
+                    }
+                }));
+            } else {
+                // Fallback: simulate
+                await new Promise(r => setTimeout(r, 1800 + Math.random() * 1200));
+                const fakeTx = '0x' + Array.from({length:64},()=>Math.floor(Math.random()*16).toString(16)).join('');
+                setMintedConfigs(prev => ({
+                    ...prev,
+                    [configId]: {
+                        tx: fakeTx,
+                        title: analysis.title,
+                        tokens: placedTokens.length,
+                        connections: animatedConnections.length,
+                        timestamp: new Date().toLocaleString()
+                    }
+                }));
             }
-        }));
+        } catch(e) {
+            console.error('Mint error:', e);
+            alert('Mint failed: ' + e.message);
+        }
         setMintingId(null);
     };
 
@@ -313,9 +354,10 @@ Provide JSON response:
                     <div className="bg-gradient-to-r from-purple-900/90 to-indigo-900/90 backdrop-blur-md rounded-lg p-6 shadow-2xl border border-purple-500/30">
                         <div className="flex justify-between items-start mb-3">
                             <h2 className="text-2xl font-bold text-purple-200">{analysis.title}</h2>
-                            {walletAddress && (
-                                <div className="text-xs text-purple-300">🟢 {shortAddr}</div>
-                            )}
+                            <div className="text-right">
+                                {walletAddress && <div className="text-xs text-purple-300">🟢 {shortAddr}</div>}
+                                {contractAddress && <div className="text-xs text-emerald-400">✓ contract</div>}
+                            </div>
                         </div>
                         <p className="text-purple-100 leading-relaxed mb-4">{analysis.description}</p>
 
@@ -336,15 +378,22 @@ Provide JSON response:
                                     </div>
                                 </div>
                             </div>
-                            {walletAddress ? (
-                                <button onClick={mintConfig} disabled={mintingId !== null} className={`px-6 py-2 rounded-lg font-medium transition-all ${mintingId ? 'bg-slate-500/50 text-slate-300 cursor-not-allowed' : 'bg-emerald-600 text-white hover:bg-emerald-500'}`}>
-                                    {mintingId ? 'Minting...' : 'Mint Config'}
-                                </button>
-                            ) : (
-                                <button onClick={connectWallet} className="px-6 py-2 bg-purple-600 text-white rounded-lg font-medium hover:bg-purple-500 transition-all">
-                                    Connect to Mint
-                                </button>
-                            )}
+                            <div className="flex gap-2">
+                                {!contractAddress && (
+                                    <button onClick={() => setShowContractSetup(true)} className="px-4 py-2 bg-amber-600 text-white rounded-lg font-medium text-sm hover:bg-amber-500 transition-all">
+                                        Set Contract
+                                    </button>
+                                )}
+                                {walletAddress ? (
+                                    <button onClick={mintConfig} disabled={mintingId !== null || !contractAddress} className={`px-6 py-2 rounded-lg font-medium transition-all ${mintingId || !contractAddress ? 'bg-slate-500/50 text-slate-300 cursor-not-allowed' : 'bg-emerald-600 text-white hover:bg-emerald-500'}`}>
+                                        {mintingId ? 'Minting...' : 'Mint Config'}
+                                    </button>
+                                ) : (
+                                    <button onClick={connectWallet} className="px-6 py-2 bg-purple-600 text-white rounded-lg font-medium hover:bg-purple-500 transition-all">
+                                        Connect Wallet
+                                    </button>
+                                )}
+                            </div>
                         </div>
                     </div>
                 </div>
@@ -366,13 +415,43 @@ Provide JSON response:
                                             <h4 className="text-white font-semibold">{config.title}</h4>
                                             <p className="text-purple-300 text-sm">{config.tokens} tokens • {config.connections} connections</p>
                                         </div>
-                                        <a href={`https://etherscan.io/tx/${config.tx}`} target="_blank" rel="noopener noreferrer" className="text-emerald-400 hover:text-emerald-300 text-xs">
+                                        <a href={`https://basescan.org/tx/${config.tx}`} target="_blank" rel="noopener noreferrer" className="text-emerald-400 hover:text-emerald-300 text-xs">
                                             view tx
                                         </a>
                                     </div>
                                     <p className="text-purple-200 text-xs">{config.timestamp}</p>
                                 </div>
                             ))}
+                        </div>
+                    </div>
+                </div>
+            )}
+
+            {/* Contract Setup Modal */}
+            {showContractSetup && (
+                <div className="absolute inset-0 bg-black/50 backdrop-blur-sm flex items-center justify-center z-50">
+                    <div className="bg-slate-900 rounded-lg p-6 max-w-md w-full mx-4 border border-purple-500/30">
+                        <h3 className="text-2xl font-bold text-white mb-4">Configure Contract</h3>
+                        <p className="text-sm text-purple-300 mb-4">Deploy a contract on <strong>Base</strong> or paste your existing address:</p>
+                        <input
+                            type="text"
+                            placeholder="0x..."
+                            defaultValue={contractAddress}
+                            onChange={(e) => setContractAddress(e.target.value)}
+                            className="w-full px-4 py-2 mb-4 text-sm bg-slate-800 border border-purple-500/30 rounded-lg text-white placeholder-gray-500 focus:outline-none focus:ring-2 focus:ring-purple-500"
+                        />
+                        <div className="flex gap-3">
+                            <a href="https://github.com/momomelis/musical-journey#deploy-grassdiscoveries-to-base" target="_blank" rel="noopener noreferrer" className="flex-1 text-center bg-purple-600 hover:bg-purple-500 text-white px-4 py-2 rounded-lg font-medium text-sm transition-all">
+                                Deploy Guide
+                            </a>
+                        </div>
+                        <div className="flex gap-3 mt-3">
+                            <button onClick={() => { localStorage.setItem('jupiterContractAddress', contractAddress); localStorage.setItem('jupiterNetwork', 'base'); setShowContractSetup(false); }} className="flex-1 bg-emerald-600 hover:bg-emerald-500 text-white px-4 py-2 rounded-lg font-medium text-sm transition-all">
+                                Save
+                            </button>
+                            <button onClick={() => setShowContractSetup(false)} className="flex-1 bg-slate-700 hover:bg-slate-600 text-white px-4 py-2 rounded-lg font-medium text-sm transition-all">
+                                Cancel
+                            </button>
                         </div>
                     </div>
                 </div>
