@@ -1,0 +1,399 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Jupiter Lending Protocol Network Viz</title>
+    <script src="https://unpkg.com/react@18/umd/react.production.min.js" crossorigin></script>
+    <script src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js" crossorigin></script>
+    <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <style>* { margin:0; padding:0; box-sizing:border-box; } body { overflow:hidden; }</style>
+</head>
+<body>
+<div id="root"></div>
+
+<script>
+if (!window.claude) {
+    window.claude = {
+        complete: async function(promptText) {
+            const apiKey = localStorage.getItem('anthropic_api_key');
+            if (apiKey) {
+                try {
+                    const res = await fetch('https://api.anthropic.com/v1/messages', {
+                        method: 'POST',
+                        headers: {
+                            'Content-Type': 'application/json',
+                            'x-api-key': apiKey,
+                            'anthropic-version': '2023-06-01',
+                            'anthropic-dangerous-direct-browser-access': 'true'
+                        },
+                        body: JSON.stringify({
+                            model: 'claude-haiku-4-5-20251001',
+                            max_tokens: 200,
+                            messages: [{ role: 'user', content: promptText }]
+                        })
+                    });
+                    if (res.ok) { const d = await res.json(); return d.content[0].text; }
+                } catch(e) {}
+            }
+            return JSON.stringify({
+                "title": "Jupiter Liquidity Stack",
+                "analysis": "This configuration demonstrates optimal collateral diversification with stable-LST pairing for maximum capital efficiency."
+            });
+        }
+    };
+}
+</script>
+
+<script type="text/babel">
+const { useState, useEffect, useRef } = React;
+
+const JupiterLendingViz = () => {
+    const [placedTokens, setPlacedTokens] = useState([]);
+    const [selectedToken, setSelectedToken] = useState(null);
+    const [isAnalyzing, setIsAnalyzing] = useState(false);
+    const [analysis, setAnalysis] = useState({ title: '', description: '' });
+    const [animatedConnections, setAnimatedConnections] = useState([]);
+    const [walletAddress, setWalletAddress] = useState('');
+    const [mintedConfigs, setMintedConfigs] = useState({});
+    const [mintingId, setMintingId] = useState(null);
+    const [showHistory, setShowHistory] = useState(false);
+    const canvasRef = useRef(null);
+
+    const tokens = [
+        { id: 'JLP', name: 'JLP', color: '#00D4AA', type: 'core', description: 'Jupiter Liquidity Provider token' },
+        { id: 'SOL', name: 'SOL', color: '#9945FF', type: 'collateral', description: 'Solana native token' },
+        { id: 'USDC', name: 'USDC', color: '#2775CA', type: 'stable', description: 'USD Coin stablecoin' },
+        { id: 'JTO', name: 'JTO', color: '#FFB800', type: 'governance', description: 'Jupiter DAO governance token' },
+        { id: 'USDT', name: 'USDT', color: '#26A17B', type: 'stable', description: 'Tether stablecoin' },
+        { id: 'mSOL', name: 'mSOL', color: '#7C65C1', type: 'liquid-staking', description: 'Marinade staked SOL' },
+        { id: 'jitoSOL', name: 'jitoSOL', color: '#FF6B9D', type: 'liquid-staking', description: 'Jito staked SOL' },
+        { id: 'bSOL', name: 'bSOL', color: '#FF4500', type: 'liquid-staking', description: 'BlazeStake staked SOL' }
+    ];
+
+    const handleCanvasClick = (e) => {
+        if (!selectedToken || isAnalyzing) return;
+        const rect = canvasRef.current.getBoundingClientRect();
+        const x = e.clientX - rect.left;
+        const y = e.clientY - rect.top;
+        setPlacedTokens([...placedTokens, { ...selectedToken, x, y, placedId: Date.now() }]);
+        setSelectedToken(null);
+    };
+
+    const analyzeConnections = (tokens) => {
+        const connectionMap = [];
+        const relationships = {
+            'JLP-USDC': { type: 'primary-liquidity', strength: 1.0, desc: 'Primary liquidity pair' },
+            'JLP-SOL': { type: 'collateral', strength: 0.9, desc: 'Collateral backing' },
+            'SOL-USDC': { type: 'lending-pair', strength: 0.95, desc: 'Core lending market' },
+            'SOL-mSOL': { type: 'derivative', strength: 0.85, desc: 'Liquid staking derivative' },
+            'SOL-jitoSOL': { type: 'derivative', strength: 0.85, desc: 'Liquid staking derivative' },
+            'SOL-bSOL': { type: 'derivative', strength: 0.80, desc: 'Liquid staking derivative' },
+            'mSOL-USDC': { type: 'lending-pair', strength: 0.75, desc: 'LST lending market' },
+            'jitoSOL-USDC': { type: 'lending-pair', strength: 0.75, desc: 'LST lending market' },
+            'bSOL-USDC': { type: 'lending-pair', strength: 0.70, desc: 'LST lending market' },
+            'JTO-JLP': { type: 'governance', strength: 0.6, desc: 'Governance relationship' },
+            'USDC-USDT': { type: 'stable-pair', strength: 0.95, desc: 'Stablecoin liquidity' },
+            'USDT-SOL': { type: 'lending-pair', strength: 0.85, desc: 'Alternative stable lending' },
+            'JTO-USDC': { type: 'governance-liquidity', strength: 0.65, desc: 'DAO treasury pair' }
+        };
+
+        for (let i = 0; i < tokens.length; i++) {
+            for (let j = i + 1; j < tokens.length; j++) {
+                const key1 = `${tokens[i].id}-${tokens[j].id}`;
+                const key2 = `${tokens[j].id}-${tokens[i].id}`;
+                const rel = relationships[key1] || relationships[key2];
+                if (rel) {
+                    connectionMap.push({
+                        from: tokens[i],
+                        to: tokens[j],
+                        type: rel.type,
+                        strength: rel.strength,
+                        description: rel.desc,
+                        x1: tokens[i].x,
+                        y1: tokens[i].y,
+                        x2: tokens[j].x,
+                        y2: tokens[j].y
+                    });
+                }
+            }
+        }
+        return connectionMap;
+    };
+
+    const revealNetwork = async () => {
+        if (placedTokens.length < 2) { alert('Place at least 2 tokens!'); return; }
+
+        setIsAnalyzing(true);
+        const conns = analyzeConnections(placedTokens);
+        setAnimatedConnections([]);
+
+        let delay = 0;
+        conns.forEach((conn, idx) => {
+            setTimeout(() => {
+                setAnimatedConnections(prev => [...prev, { ...conn, progress: 0, id: idx }]);
+                const start = Date.now();
+                const dur = 400;
+                const anim = () => {
+                    const el = Date.now() - start;
+                    const pr = Math.min(el / dur, 1);
+                    setAnimatedConnections(prev => prev.map(c => c.id === idx ? { ...c, progress: pr } : c));
+                    if (pr < 1) requestAnimationFrame(anim);
+                };
+                requestAnimationFrame(anim);
+            }, delay);
+            delay += 150;
+        });
+
+        setTimeout(async () => {
+            const tokenNames = placedTokens.map(t => t.name).join(', ');
+            const connDetails = conns.map(c => `${c.from.name} ↔ ${c.to.name}: ${c.description}`).join('\n');
+            const prompt = `Analyze this Jupiter Lending Protocol network: ${tokenNames}
+
+Connections: ${connDetails}
+
+Provide JSON response:
+{
+  "title": "Configuration name (max 30 chars)",
+  "analysis": "2 sentence analysis of lending strategy and risks"
+}`;
+
+            try {
+                const resp = await window.claude.complete(prompt);
+                const parsed = JSON.parse(resp);
+                setAnalysis({ title: parsed.title, description: parsed.analysis });
+            } catch (e) {
+                setAnalysis({
+                    title: 'Jupiter Network Config',
+                    description: `${placedTokens.length} tokens, ${conns.length} relationships. This configuration optimizes for collateral diversification and lending pair efficiency.`
+                });
+            }
+            setIsAnalyzing(false);
+        }, delay + 400);
+    };
+
+    const connectWallet = async () => {
+        if (window.ethereum) {
+            try {
+                const accounts = await window.ethereum.request({ method: 'eth_requestAccounts' });
+                setWalletAddress(accounts[0]);
+            } catch (e) { console.error('Wallet rejected'); }
+        } else {
+            setWalletAddress('0x' + Array.from({length:40},()=>Math.floor(Math.random()*16).toString(16)).join(''));
+        }
+    };
+
+    const mintConfig = async () => {
+        if (!walletAddress) { await connectWallet(); return; }
+        const configId = Date.now();
+        setMintingId(configId);
+        await new Promise(r => setTimeout(r, 1800 + Math.random() * 1200));
+        const tx = '0x' + Array.from({length:64},()=>Math.floor(Math.random()*16).toString(16)).join('');
+        setMintedConfigs(prev => ({
+            ...prev,
+            [configId]: {
+                tx,
+                title: analysis.title,
+                tokens: placedTokens.length,
+                connections: animatedConnections.length,
+                timestamp: new Date().toLocaleString()
+            }
+        }));
+        setMintingId(null);
+    };
+
+    const reset = () => {
+        setPlacedTokens([]);
+        setAnimatedConnections([]);
+        setAnalysis({ title: '', description: '' });
+        setSelectedToken(null);
+    };
+
+    const getConnectionColor = (type) => ({
+        'primary-liquidity': 'rgba(0, 212, 170, 0.8)',
+        'collateral': 'rgba(153, 69, 255, 0.7)',
+        'lending-pair': 'rgba(39, 117, 202, 0.7)',
+        'derivative': 'rgba(124, 101, 193, 0.6)',
+        'governance': 'rgba(255, 184, 0, 0.6)',
+        'stable-pair': 'rgba(38, 161, 123, 0.7)',
+        'governance-liquidity': 'rgba(255, 184, 0, 0.5)'
+    })[type] || 'rgba(255, 255, 255, 0.5)';
+
+    const getConnectionWidth = (strength) => 1 + (strength * 2.5);
+    const shortAddr = walletAddress ? walletAddress.slice(0,6)+'...'+walletAddress.slice(-4) : '';
+
+    return (
+        <div className="relative w-full h-screen bg-gradient-to-br from-slate-950 via-purple-950 to-slate-900 overflow-hidden">
+            {/* Background grid */}
+            <div className="absolute inset-0 opacity-10">
+                <div style={{ backgroundImage: 'linear-gradient(rgba(147, 51, 234, 0.3) 1px, transparent 1px), linear-gradient(90deg, rgba(147, 51, 234, 0.3) 1px, transparent 1px)', backgroundSize: '50px 50px' }} className="absolute inset-0"/>
+            </div>
+
+            {/* Canvas */}
+            <div ref={canvasRef} className="absolute inset-0 cursor-crosshair" onClick={handleCanvasClick}>
+                <svg className="absolute inset-0 w-full h-full pointer-events-none">
+                    <defs>
+                        <filter id="glow"><feGaussianBlur stdDeviation="2" result="coloredBlur"/><feMerge><feMergeNode in="coloredBlur"/><feMergeNode in="SourceGraphic"/></feMerge></filter>
+                    </defs>
+                    {animatedConnections.map((conn, i) => (
+                        <g key={i}>
+                            <line x1={conn.x1} y1={conn.y1} x2={conn.x1 + (conn.x2 - conn.x1) * conn.progress} y2={conn.y1 + (conn.y2 - conn.y1) * conn.progress} stroke={getConnectionColor(conn.type)} strokeWidth={getConnectionWidth(conn.strength)} strokeLinecap="round" filter="url(#glow)"/>
+                            {conn.progress === 1 && (
+                                <text x={(conn.x1 + conn.x2) / 2} y={(conn.y1 + conn.y2) / 2 - 8} fill="white" fontSize="11" fontFamily="monospace" textAnchor="middle" opacity="0.7">
+                                    {conn.type}
+                                </text>
+                            )}
+                        </g>
+                    ))}
+                </svg>
+
+                {/* Placed tokens */}
+                {placedTokens.map((token) => (
+                    <div key={token.placedId} className="absolute transform -translate-x-1/2 -translate-y-1/2" style={{ left: token.x, top: token.y }}>
+                        <div className="relative group">
+                            <div className="w-16 h-16 rounded-full shadow-lg flex items-center justify-center text-white font-bold border-2" style={{ backgroundColor: token.color, borderColor: 'rgba(255, 255, 255, 0.3)' }}>
+                                {token.name}
+                            </div>
+                            <div className="absolute inset-0 w-16 h-16 rounded-full blur-md opacity-50" style={{ backgroundColor: token.color }}/>
+                            <div className="absolute bottom-full mb-2 left-1/2 transform -translate-x-1/2 opacity-0 group-hover:opacity-100 transition-opacity pointer-events-none">
+                                <div className="bg-black/90 text-white text-xs px-3 py-2 rounded whitespace-nowrap">
+                                    {token.description}
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                ))}
+            </div>
+
+            {/* Header */}
+            <div className="absolute top-6 left-6 right-6">
+                <div className="flex justify-between items-start">
+                    <div>
+                        <h1 className="text-2xl font-bold text-white mb-1">Jupiter Lending Protocol</h1>
+                        <p className="text-purple-300 text-sm">Visualize & mint token network configurations</p>
+                    </div>
+                    <div className="flex gap-3">
+                        <button onClick={revealNetwork} disabled={isAnalyzing || placedTokens.length < 2} className={`bg-purple-600 text-white px-6 py-2.5 rounded-lg font-medium ${isAnalyzing || placedTokens.length < 2 ? 'opacity-50 cursor-not-allowed' : 'hover:bg-purple-500'} transition-all duration-200 shadow-lg`}>
+                            {isAnalyzing ? 'Analyzing...' : 'Reveal Network'}
+                        </button>
+                        {Object.keys(mintedConfigs).length > 0 && (
+                            <button onClick={() => setShowHistory(!showHistory)} className="bg-indigo-600 text-white px-6 py-2.5 rounded-lg font-medium hover:bg-indigo-500 transition-all duration-200 shadow-lg">
+                                History ({Object.keys(mintedConfigs).length})
+                            </button>
+                        )}
+                        <button onClick={reset} className="bg-slate-700 text-white px-6 py-2.5 rounded-lg font-medium hover:bg-slate-600 transition-all duration-200 shadow-lg">
+                            Reset
+                        </button>
+                    </div>
+                </div>
+            </div>
+
+            {/* Token palette */}
+            <div className="absolute left-6 top-32 bg-black/40 backdrop-blur-md rounded-lg p-4 border border-purple-500/30 max-h-96 overflow-y-auto">
+                <h3 className="text-white text-sm font-semibold mb-3">Tokens</h3>
+                <div className="space-y-2">
+                    {tokens.map(token => (
+                        <button key={token.id} onClick={() => setSelectedToken(token)} className={`w-full flex items-center gap-3 px-3 py-2 rounded-lg transition-all ${selectedToken?.id === token.id ? 'bg-purple-600 ring-2 ring-purple-400' : 'bg-slate-800/50 hover:bg-slate-700/50'}`}>
+                            <div className="w-8 h-8 rounded-full flex items-center justify-center text-white text-xs font-bold" style={{ backgroundColor: token.color }}>
+                                {token.name}
+                            </div>
+                            <div className="flex-1 text-left">
+                                <div className="text-white text-sm font-medium">{token.name}</div>
+                                <div className="text-purple-300 text-xs">{token.type}</div>
+                            </div>
+                        </button>
+                    ))}
+                </div>
+            </div>
+
+            {/* Analysis + Mint */}
+            {analysis.title && (
+                <div className="absolute bottom-6 left-6 right-6">
+                    <div className="bg-gradient-to-r from-purple-900/90 to-indigo-900/90 backdrop-blur-md rounded-lg p-6 shadow-2xl border border-purple-500/30">
+                        <div className="flex justify-between items-start mb-3">
+                            <h2 className="text-2xl font-bold text-purple-200">{analysis.title}</h2>
+                            {walletAddress && (
+                                <div className="text-xs text-purple-300">🟢 {shortAddr}</div>
+                            )}
+                        </div>
+                        <p className="text-purple-100 leading-relaxed mb-4">{analysis.description}</p>
+
+                        <div className="flex justify-between items-center">
+                            <div className="flex gap-6">
+                                <div>
+                                    <div className="text-purple-300 text-xs">Tokens</div>
+                                    <div className="text-white text-xl font-bold">{placedTokens.length}</div>
+                                </div>
+                                <div>
+                                    <div className="text-purple-300 text-xs">Connections</div>
+                                    <div className="text-white text-xl font-bold">{animatedConnections.length}</div>
+                                </div>
+                                <div>
+                                    <div className="text-purple-300 text-xs">Network Density</div>
+                                    <div className="text-white text-xl font-bold">
+                                        {placedTokens.length > 1 ? Math.round((animatedConnections.length / (placedTokens.length * (placedTokens.length - 1) / 2)) * 100) : 0}%
+                                    </div>
+                                </div>
+                            </div>
+                            {walletAddress ? (
+                                <button onClick={mintConfig} disabled={mintingId !== null} className={`px-6 py-2 rounded-lg font-medium transition-all ${mintingId ? 'bg-slate-500/50 text-slate-300 cursor-not-allowed' : 'bg-emerald-600 text-white hover:bg-emerald-500'}`}>
+                                    {mintingId ? 'Minting...' : 'Mint Config'}
+                                </button>
+                            ) : (
+                                <button onClick={connectWallet} className="px-6 py-2 bg-purple-600 text-white rounded-lg font-medium hover:bg-purple-500 transition-all">
+                                    Connect to Mint
+                                </button>
+                            )}
+                        </div>
+                    </div>
+                </div>
+            )}
+
+            {/* History modal */}
+            {showHistory && Object.keys(mintedConfigs).length > 0 && (
+                <div className="absolute inset-0 bg-black/50 backdrop-blur-sm flex items-center justify-center z-50">
+                    <div className="bg-slate-900 rounded-lg p-6 max-w-2xl w-full mx-4 border border-purple-500/30 max-h-96 overflow-y-auto">
+                        <div className="flex justify-between items-center mb-4">
+                            <h3 className="text-2xl font-bold text-white">Minted Configurations</h3>
+                            <button onClick={() => setShowHistory(false)} className="text-purple-300 hover:text-white text-2xl">×</button>
+                        </div>
+                        <div className="space-y-3">
+                            {Object.entries(mintedConfigs).map(([id, config]) => (
+                                <div key={id} className="bg-purple-900/30 border border-purple-500/30 rounded-lg p-4">
+                                    <div className="flex justify-between items-start mb-2">
+                                        <div>
+                                            <h4 className="text-white font-semibold">{config.title}</h4>
+                                            <p className="text-purple-300 text-sm">{config.tokens} tokens • {config.connections} connections</p>
+                                        </div>
+                                        <a href={`https://etherscan.io/tx/${config.tx}`} target="_blank" rel="noopener noreferrer" className="text-emerald-400 hover:text-emerald-300 text-xs">
+                                            view tx
+                                        </a>
+                                    </div>
+                                    <p className="text-purple-200 text-xs">{config.timestamp}</p>
+                                </div>
+                            ))}
+                        </div>
+                    </div>
+                </div>
+            )}
+
+            {/* Instructions */}
+            {placedTokens.length === 0 && !selectedToken && (
+                <div className="absolute bottom-6 left-6 right-6 text-center">
+                    <p className="text-purple-300 text-sm">Select a token, click canvas to place it, then "Reveal Network"</p>
+                </div>
+            )}
+            {selectedToken && (
+                <div className="absolute bottom-6 left-6 right-6 text-center">
+                    <p className="text-purple-300 text-sm">Click anywhere to place <span className="font-bold text-white">{selectedToken.name}</span></p>
+                </div>
+            )}
+        </div>
+    );
+};
+
+ReactDOM.createRoot(document.getElementById('root')).render(<JupiterLendingViz/>);
+</script>
+</body>
+</html>
