@@ -144,6 +144,366 @@ const LESSONS = [
   },
 ];
 
+// ─── Withdrawal Constants ──────────────────────────────────────────
+const USDC_BALANCE   = 14240.50;
+const ARTIST_SHARE   = 8680.00;
+const USDC_MINT      = "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v";
+
+const RECENT_EARNINGS = [
+  { event: "Tokyo Vaporwave Collective", date: "Jun 10", amount: 2400 },
+  { event: "Sunset Synth Sessions",      date: "Jun 5",  amount: 1800 },
+  { event: "Neon Grid Festival",          date: "May 28", amount: 2000 },
+  { event: "DAO Governance Reward",       date: "Jun 1",  amount: 480  },
+  { event: "Stream Royalties",            date: "May 25", amount: 2000 },
+];
+
+const validateSolanaAddress = (addr) => /^[1-9A-HJ-NP-Z]{43,44}$/.test(addr);
+const estimateGasFee = () => 0.05;
+
+const withdrawUSDC = async (recipientAddress, amountUSDC) => {
+  // Ready to wire to @solana/spl-token + @solana/web3.js
+  // const tokenAccount = await getAssociatedTokenAddress(USDC_MINT, userWalletAddress);
+  // const instruction  = createTransferInstruction(tokenAccount, recipientAddress, userWalletAddress, amountUSDC * 1e6);
+  // const tx           = new Transaction().add(instruction);
+  // const signature    = await window.solana.signAndSendTransaction(tx);
+  // Simulated for now:
+  await new Promise(r => setTimeout(r, 2200 + Math.random() * 800));
+  const chars = "ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz123456789";
+  return Array.from({length: 88}, () => chars[Math.floor(Math.random() * chars.length)]).join('');
+};
+
+// ─── Withdrawal Modal ──────────────────────────────────────────────
+function WithdrawalModal({ onClose, balance, mode, preset }) {
+  const [step, setStep]       = useState("amount");
+  const [amount, setAmount]   = useState(preset ? preset.toFixed(2) : "");
+  const [address, setAddress] = useState("");
+  const [isSigning, setSigning] = useState(false);
+  const [txHash, setTxHash]   = useState("");
+
+  const parsed    = parseFloat(amount) || 0;
+  const gas       = estimateGasFee();
+  const net       = Math.max(0, parsed - gas);
+  const validAmt  = parsed > gas && parsed <= balance;
+  const validAddr = validateSolanaAddress(address);
+
+  const presets = [0.25, 0.5, 0.75, 1];
+
+  const advance = async () => {
+    if (step === "amount" && validAmt)  { setStep("address"); return; }
+    if (step === "address" && validAddr){ setStep("confirm"); return; }
+    if (step === "confirm") {
+      setSigning(true);
+      try {
+        const sig = await withdrawUSDC(address, parsed);
+        setTxHash(sig);
+        setStep("done");
+      } catch(e) {
+        console.error(e);
+      } finally {
+        setSigning(false);
+      }
+    }
+  };
+
+  const stepLabel = { amount: "1 / 3  AMOUNT", address: "2 / 3  DESTINATION", confirm: "3 / 3  CONFIRM", done: "✓  SENT" };
+
+  const inputStyle = {
+    width: "100%", background: "rgba(255,255,255,0.04)", border: `1px solid ${COLORS.cyan}44`,
+    borderRadius: 8, padding: "12px 14px", color: "#fff",
+    fontFamily: "monospace", fontSize: 14, outline: "none",
+  };
+
+  const btnStyle = (enabled, color = COLORS.cyan) => ({
+    width: "100%", padding: "14px", borderRadius: 8, border: "none", cursor: enabled ? "pointer" : "not-allowed",
+    background: enabled ? `linear-gradient(135deg,${color},${COLORS.purple})` : "rgba(255,255,255,0.06)",
+    color: enabled ? "#fff" : "rgba(255,255,255,0.2)",
+    fontFamily: "monospace", fontWeight: 700, fontSize: 12,
+    letterSpacing: 1.5, textTransform: "uppercase", transition: "all 0.2s",
+  });
+
+  return (
+    <div style={{
+      position: "fixed", inset: 0, zIndex: 1000,
+      background: "rgba(0,0,0,0.75)", backdropFilter: "blur(16px)",
+      display: "flex", alignItems: "center", justifyContent: "center", padding: 24,
+    }}>
+      <div style={{
+        background: "rgba(10,0,21,0.95)", border: `1px solid ${COLORS.cyan}55`,
+        borderRadius: 16, padding: 32, width: "100%", maxWidth: 420,
+        boxShadow: `0 0 60px ${COLORS.cyan}22, 0 0 120px ${COLORS.purple}11`,
+      }}>
+        {/* Header */}
+        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 28 }}>
+          <div>
+            <div style={{ color: COLORS.cyan, fontSize: 9, letterSpacing: 3, textTransform: "uppercase", marginBottom: 4 }}>
+              {stepLabel[step]}
+            </div>
+            <div style={{ color: "#fff", fontWeight: 900, fontSize: 18, letterSpacing: 1 }}>
+              {mode === "artist" ? "💸 Withdraw Earnings" : "💸 Withdraw USDC"}
+            </div>
+          </div>
+          <button onClick={onClose} style={{
+            background: "none", border: "none", color: "rgba(255,255,255,0.3)",
+            fontSize: 22, cursor: "pointer", lineHeight: 1,
+          }}>✕</button>
+        </div>
+
+        {/* Step 1 — Amount */}
+        {step === "amount" && (
+          <div>
+            <div style={{ color: "rgba(255,255,255,0.4)", fontSize: 11, marginBottom: 8, letterSpacing: 1 }}>
+              AVAILABLE: <span style={{ color: COLORS.teal }}>${balance.toLocaleString("en-US", {minimumFractionDigits:2})} USDC</span>
+            </div>
+
+            <div style={{ position: "relative", marginBottom: 12 }}>
+              <span style={{ position: "absolute", left: 14, top: "50%", transform: "translateY(-50%)", color: COLORS.cyan, fontWeight: 700 }}>$</span>
+              <input
+                style={{ ...inputStyle, paddingLeft: 28, fontSize: 22, fontWeight: 700 }}
+                type="number"
+                placeholder="0.00"
+                value={amount}
+                onChange={e => setAmount(e.target.value)}
+                min="0" max={balance} step="0.01"
+              />
+            </div>
+
+            {/* Presets */}
+            <div style={{ display: "grid", gridTemplateColumns: "repeat(4,1fr)", gap: 8, marginBottom: 16 }}>
+              {presets.map(p => (
+                <button key={p} onClick={() => setAmount((balance * p).toFixed(2))} style={{
+                  padding: "8px 0", borderRadius: 6, border: `1px solid ${COLORS.cyan}33`,
+                  background: "rgba(1,205,254,0.05)", color: COLORS.cyan,
+                  fontFamily: "monospace", fontSize: 11, fontWeight: 700, cursor: "pointer",
+                  transition: "all 0.2s",
+                }}>{p * 100}%</button>
+              ))}
+            </div>
+
+            {/* Fee breakdown */}
+            <div style={{
+              background: "rgba(255,255,255,0.03)", borderRadius: 8, padding: "12px 14px",
+              marginBottom: 20, fontSize: 11, fontFamily: "monospace",
+            }}>
+              {[
+                ["Amount",    `$${parsed.toFixed(2)} USDC`],
+                ["Gas fee",   `-$${gas.toFixed(2)} USDC`],
+                ["Net receive", `$${net.toFixed(2)} USDC`],
+              ].map(([l, v], i) => (
+                <div key={l} style={{
+                  display: "flex", justifyContent: "space-between",
+                  color: i === 2 ? COLORS.teal : "rgba(255,255,255,0.4)",
+                  fontWeight: i === 2 ? 700 : 400,
+                  marginBottom: i < 2 ? 6 : 0,
+                  paddingTop: i === 2 ? 8 : 0,
+                  borderTop: i === 2 ? `1px solid rgba(255,255,255,0.08)` : "none",
+                }}>
+                  <span>{l}</span><span>{v}</span>
+                </div>
+              ))}
+            </div>
+
+            <button style={btnStyle(validAmt)} onClick={advance} disabled={!validAmt}>
+              SET DESTINATION  →
+            </button>
+          </div>
+        )}
+
+        {/* Step 2 — Address */}
+        {step === "address" && (
+          <div>
+            <div style={{ color: "rgba(255,255,255,0.4)", fontSize: 11, marginBottom: 8, letterSpacing: 1 }}>
+              SOLANA WALLET ADDRESS
+            </div>
+            <textarea
+              style={{
+                ...inputStyle, resize: "none", height: 90,
+                border: `1px solid ${address ? (validAddr ? COLORS.teal : COLORS.pink) : COLORS.cyan + "44"}`,
+              }}
+              placeholder="Paste your Solana address (43–44 characters)"
+              value={address}
+              onChange={e => setAddress(e.target.value.trim())}
+            />
+            <div style={{
+              fontSize: 10, marginTop: 6, marginBottom: 20,
+              color: address ? (validAddr ? COLORS.teal : COLORS.pink) : "rgba(255,255,255,0.2)",
+              fontFamily: "monospace",
+            }}>
+              {address
+                ? validAddr ? "✓  Valid Solana address" : `✕  Invalid (${address.length} chars — need 43–44)`
+                : "Copy address from Phantom, Ledger, or your exchange"}
+            </div>
+
+            <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10 }}>
+              <button style={btnStyle(true, COLORS.pink)} onClick={() => setStep("amount")}>← BACK</button>
+              <button style={btnStyle(validAddr)} onClick={advance} disabled={!validAddr}>REVIEW  →</button>
+            </div>
+          </div>
+        )}
+
+        {/* Step 3 — Confirm */}
+        {step === "confirm" && (
+          <div>
+            {[
+              ["Sending",    `$${parsed.toFixed(2)} USDC`],
+              ["To",         address.slice(0,8) + "…" + address.slice(-6)],
+              ["Gas fee",    `-$${gas.toFixed(2)} USDC`],
+              ["Net receive", `$${net.toFixed(2)} USDC`],
+              ["Network",    "Solana Mainnet"],
+            ].map(([l, v], i) => (
+              <div key={l} style={{
+                display: "flex", justifyContent: "space-between", alignItems: "center",
+                padding: "10px 0", borderBottom: "1px solid rgba(255,255,255,0.06)",
+                fontSize: 12, fontFamily: "monospace",
+              }}>
+                <span style={{ color: "rgba(255,255,255,0.4)" }}>{l}</span>
+                <span style={{ color: i === 3 ? COLORS.teal : "#fff", fontWeight: i === 3 ? 700 : 400 }}>{v}</span>
+              </div>
+            ))}
+
+            <div style={{
+              marginTop: 16, padding: "10px 14px", borderRadius: 8,
+              background: "rgba(185,103,255,0.08)", border: `1px solid ${COLORS.purple}33`,
+              fontSize: 10, color: "rgba(255,255,255,0.4)", lineHeight: 1.6, marginBottom: 20,
+            }}>
+              ⚡ Phantom Wallet will prompt you to sign this SPL token transfer. The transaction broadcasts to Solana immediately after signing.
+            </div>
+
+            <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10 }}>
+              <button style={btnStyle(true, COLORS.pink)} onClick={() => setStep("address")}>← BACK</button>
+              <button style={btnStyle(!isSigning, COLORS.teal)} onClick={advance} disabled={isSigning}>
+                {isSigning ? "SIGNING…" : "SIGN & SEND ⟶"}
+              </button>
+            </div>
+          </div>
+        )}
+
+        {/* Done */}
+        {step === "done" && (
+          <div style={{ textAlign: "center" }}>
+            <div style={{ fontSize: 48, marginBottom: 16 }}>✅</div>
+            <div style={{ color: COLORS.teal, fontWeight: 900, fontSize: 16, letterSpacing: 1, marginBottom: 8 }}>
+              TRANSACTION SENT
+            </div>
+            <div style={{ color: "rgba(255,255,255,0.4)", fontSize: 11, fontFamily: "monospace", marginBottom: 20 }}>
+              ${parsed.toFixed(2)} USDC → {address.slice(0,8)}…{address.slice(-6)}
+            </div>
+            <a
+              href={`https://solscan.io/tx/${txHash}`}
+              target="_blank" rel="noopener noreferrer"
+              style={{
+                display: "block", padding: "10px", borderRadius: 8,
+                background: "rgba(1,205,254,0.08)", border: `1px solid ${COLORS.cyan}33`,
+                color: COLORS.cyan, textDecoration: "none",
+                fontFamily: "monospace", fontSize: 10, letterSpacing: 1,
+                marginBottom: 16,
+              }}
+            >
+              VIEW ON SOLSCAN ↗
+            </a>
+            <button style={btnStyle(true, COLORS.purple)} onClick={onClose}>CLOSE</button>
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
+
+// ─── Withdraw Tab ──────────────────────────────────────────────────
+function WithdrawTab({ onOpenModal }) {
+  return (
+    <div style={{ display: "flex", flexDirection: "column", gap: 16 }}>
+      <div style={{ color: "rgba(255,255,255,0.25)", fontSize: 9, letterSpacing: 2, marginBottom: 4 }}>
+        SIGNAL PATH: WALLET → WITHDRAWAL → SOLANA
+      </div>
+
+      {/* Community card */}
+      <Card glow={COLORS.cyan}>
+        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", marginBottom: 16 }}>
+          <div>
+            <div style={{ color: "rgba(255,255,255,0.4)", fontSize: 9, letterSpacing: 2, marginBottom: 4 }}>COMMUNITY MODE</div>
+            <div style={{ color: "#fff", fontWeight: 900, fontSize: 16 }}>💸 Withdraw</div>
+          </div>
+          <Badge label="USDC" color={COLORS.cyan} />
+        </div>
+
+        <div style={{ fontFamily: "monospace", marginBottom: 16 }}>
+          <div style={{ color: "rgba(255,255,255,0.35)", fontSize: 10, letterSpacing: 1 }}>AVAILABLE BALANCE</div>
+          <div style={{ color: COLORS.teal, fontSize: 28, fontWeight: 900 }}>
+            ${USDC_BALANCE.toLocaleString("en-US", { minimumFractionDigits: 2 })}
+          </div>
+          <div style={{ color: "rgba(255,255,255,0.2)", fontSize: 10 }}>USDC · Solana Mainnet</div>
+        </div>
+
+        <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10 }}>
+          {[["Withdraw All", USDC_BALANCE], ["Withdraw 50%", USDC_BALANCE * 0.5]].map(([label, preset]) => (
+            <button key={label} onClick={() => onOpenModal("community", preset)} style={{
+              padding: "10px", borderRadius: 8, border: `1px solid ${COLORS.cyan}44`,
+              background: "rgba(1,205,254,0.06)", color: COLORS.cyan,
+              fontFamily: "monospace", fontSize: 11, fontWeight: 700,
+              cursor: "pointer", letterSpacing: 1, transition: "all 0.2s",
+            }}>{label}</button>
+          ))}
+        </div>
+      </Card>
+
+      {/* Artist card */}
+      <Card glow={COLORS.pink}>
+        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", marginBottom: 16 }}>
+          <div>
+            <div style={{ color: "rgba(255,255,255,0.4)", fontSize: 9, letterSpacing: 2, marginBottom: 4 }}>ARTIST MODE</div>
+            <div style={{ color: "#fff", fontWeight: 900, fontSize: 16 }}>💸 Withdraw Earnings</div>
+          </div>
+          <Badge label="ARTIST" color={COLORS.pink} />
+        </div>
+
+        <div style={{ fontFamily: "monospace", marginBottom: 12 }}>
+          <div style={{ color: "rgba(255,255,255,0.35)", fontSize: 10, letterSpacing: 1 }}>ARTIST SHARE</div>
+          <div style={{ color: COLORS.pink, fontSize: 28, fontWeight: 900 }}>
+            ${ARTIST_SHARE.toLocaleString("en-US", { minimumFractionDigits: 2 })}
+          </div>
+          <div style={{ color: "rgba(255,255,255,0.2)", fontSize: 10 }}>USDC · from recent events</div>
+        </div>
+
+        {/* Earnings breakdown */}
+        <div style={{ marginBottom: 16 }}>
+          {RECENT_EARNINGS.map(e => (
+            <div key={e.event} style={{
+              display: "flex", justifyContent: "space-between",
+              padding: "7px 0", borderBottom: "1px solid rgba(255,255,255,0.05)",
+              fontSize: 11, fontFamily: "monospace",
+            }}>
+              <div>
+                <div style={{ color: "rgba(255,255,255,0.6)" }}>{e.event}</div>
+                <div style={{ color: "rgba(255,255,255,0.2)", fontSize: 9 }}>{e.date}</div>
+              </div>
+              <div style={{ color: COLORS.teal, fontWeight: 700 }}>+${e.amount.toLocaleString()}</div>
+            </div>
+          ))}
+        </div>
+
+        <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10 }}>
+          {[["Withdraw All", ARTIST_SHARE], ["Withdraw 50%", ARTIST_SHARE * 0.5]].map(([label, preset]) => (
+            <button key={label} onClick={() => onOpenModal("artist", preset)} style={{
+              padding: "10px", borderRadius: 8, border: `1px solid ${COLORS.pink}44`,
+              background: "rgba(255,113,206,0.06)", color: COLORS.pink,
+              fontFamily: "monospace", fontSize: 11, fontWeight: 700,
+              cursor: "pointer", letterSpacing: 1, transition: "all 0.2s",
+            }}>{label}</button>
+          ))}
+        </div>
+
+        <div style={{
+          marginTop: 14, padding: "8px 12px", borderRadius: 6,
+          background: "rgba(185,103,255,0.08)", border: `1px solid ${COLORS.purple}33`,
+          fontSize: 9, color: "rgba(255,255,255,0.35)", letterSpacing: 0.5,
+        }}>
+          💡 PRO TIP: Keep some USDC in your wallet for DAO voting power
+        </div>
+      </Card>
+    </div>
+  );
+}
+
 // ─── Micro Components ──────────────────────────────────────────────
 
 function GlitchText({ text, style = {} }) {
@@ -682,22 +1042,32 @@ function Ticker() {
 
 // ─── MAIN APP ──────────────────────────────────────────────────────
 const TABS = [
-  { id: "wallet", label: "WALLET", icon: "◈" },
-  { id: "orders", label: "ORDER BOOK", icon: "⟁" },
-  { id: "analysis", label: "ANALYSIS", icon: "◉" },
-  { id: "trivia", label: "TRIVIA", icon: "⬡" },
-  { id: "news", label: "NEWS", icon: "◇" },
-  { id: "learn", label: "LEARN", icon: "◫" },
+  { id: "wallet",   label: "WALLET",     icon: "◈" },
+  { id: "orders",   label: "ORDER BOOK", icon: "⟁" },
+  { id: "analysis", label: "ANALYSIS",   icon: "◉" },
+  { id: "trivia",   label: "TRIVIA",     icon: "⬡" },
+  { id: "news",     label: "NEWS",       icon: "◇" },
+  { id: "learn",    label: "LEARN",      icon: "◫" },
+  { id: "withdraw", label: "WITHDRAW",   icon: "💸" },
 ];
 
 export default function VaporApp() {
   const [tab, setTab] = useState("wallet");
   const [time, setTime] = useState(new Date());
+  const [showWithdrawal, setShowWithdrawal] = useState(false);
+  const [withdrawalMode, setWithdrawalMode] = useState("community");
+  const [withdrawalPreset, setWithdrawalPreset] = useState(null);
 
   useEffect(() => {
     const t = setInterval(() => setTime(new Date()), 1000);
     return () => clearInterval(t);
   }, []);
+
+  const openModal = (mode, preset = null) => {
+    setWithdrawalMode(mode);
+    setWithdrawalPreset(preset);
+    setShowWithdrawal(true);
+  };
 
   return (
     <div style={{
@@ -728,12 +1098,21 @@ export default function VaporApp() {
             FINANCIAL SUPER APP v0.9X
           </div>
         </div>
-        <div style={{ textAlign: "right" }}>
-          <div style={{ color: COLORS.yellow, fontFamily: "monospace", fontSize: 13, fontWeight: 700 }}>
-            {time.toLocaleTimeString()}
-          </div>
-          <div style={{ color: "rgba(255,255,255,0.3)", fontSize: 9 }}>
-            SIGNAL: STRONG ●
+        <div style={{ display: "flex", alignItems: "center", gap: 16 }}>
+          <button onClick={() => openModal("community")} style={{
+            padding: "8px 18px", borderRadius: 20, border: `1px solid ${COLORS.cyan}66`,
+            background: `${COLORS.cyan}11`, color: COLORS.cyan,
+            fontFamily: "monospace", fontWeight: 700, fontSize: 11,
+            letterSpacing: 1.5, textTransform: "uppercase", cursor: "pointer",
+            transition: "all 0.2s",
+          }}>💸 Withdraw</button>
+          <div style={{ textAlign: "right" }}>
+            <div style={{ color: COLORS.yellow, fontFamily: "monospace", fontSize: 13, fontWeight: 700 }}>
+              {time.toLocaleTimeString()}
+            </div>
+            <div style={{ color: "rgba(255,255,255,0.3)", fontSize: 9 }}>
+              SIGNAL: STRONG ●
+            </div>
           </div>
         </div>
       </div>
@@ -763,13 +1142,23 @@ export default function VaporApp() {
 
       {/* Content */}
       <div style={{ padding: "20px 20px 40px", maxWidth: 680, margin: "0 auto" }}>
-        {tab === "wallet" && <WalletTab />}
-        {tab === "orders" && <OrderBookTab />}
+        {tab === "wallet"   && <WalletTab />}
+        {tab === "orders"   && <OrderBookTab />}
         {tab === "analysis" && <AnalysisTab />}
-        {tab === "trivia" && <TriviaTab />}
-        {tab === "news" && <NewsTab />}
-        {tab === "learn" && <LearnTab />}
+        {tab === "trivia"   && <TriviaTab />}
+        {tab === "news"     && <NewsTab />}
+        {tab === "learn"    && <LearnTab />}
+        {tab === "withdraw" && <WithdrawTab onOpenModal={openModal} />}
       </div>
+
+      {showWithdrawal && (
+        <WithdrawalModal
+          onClose={() => setShowWithdrawal(false)}
+          balance={withdrawalMode === "artist" ? ARTIST_SHARE : USDC_BALANCE}
+          mode={withdrawalMode}
+          preset={withdrawalPreset}
+        />
+      )}
 
       {/* Footer */}
       <div style={{
